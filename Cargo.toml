@@ -8,3 +8,4 @@ edition = "2018"
 [dependencies]
 fs_extra = "1.2.0"
 execute = "0.2.8"
+clap = "~2.33"
