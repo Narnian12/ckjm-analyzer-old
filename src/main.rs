@@ -1,14 +1,16 @@
 extern crate execute;
 extern crate fs_extra;
 extern crate clap;
-use std::fs::{File, OpenOptions};
-use std::io::{prelude::*, BufReader};
+use std::fs::OpenOptions;
+use std::io::prelude::*;
 use clap::{Arg, App};
 
 struct Metric {
     num_classes: f64,
     sum_metric: f64,
 }
+
+const NUM_METRICS: usize = 17;
 
 fn main() -> std::io::Result<()> {
     // Parse command line arguments
@@ -22,61 +24,19 @@ fn main() -> std::io::Result<()> {
                             .required(true)
                             .value_name("JAR_PATH")
                             .help("Sets the path to the CKJM Extended JAR file"))
-                        .arg(Arg::with_name("project")
+                        .arg(Arg::with_name("path")
                             .short("p")
-                            .long("project")
+                            .long("path")
                             .required(true)
-                            .value_name("PROJECT_PATH")
-                            .help("Sets the path to the project folder containing the .class files to analyze"))
-                        .arg(Arg::with_name("name")
-                            .short("n")
-                            .long("name")
-                            .required(true)
-                            .value_name("PROJECT_NAME")
-                            .help("Sets the name of the project to be analyzed"))
+                            .value_name("PROJECTS_PATH")
+                            .help("Sets the path to the `projects` folder with sub-folders of projects containing the .class files to analyze"))
                         .get_matches();
 
     let jar_path = matches.value_of("jar").unwrap();
-    let mut project_path = std::path::PathBuf::new();
-    project_path.push(matches.value_of("project").unwrap());
-    project_path.push("*.class");
-    let project_name = matches.value_of("name").unwrap();
+    let mut projects_root_path = std::path::PathBuf::new();
+    projects_root_path.push(matches.value_of("path").unwrap());
 
     let ckjm_root_dir = std::env::current_dir()?;
-
-    let mut unix_arg = "java -jar ".to_owned();
-    unix_arg.push_str(jar_path);
-    unix_arg.push(' ');
-    unix_arg.push_str(project_path.to_str().unwrap());
-    unix_arg.push_str(" > metric_output.txt 2>/dev/null");
-
-    // Execute cross-platform command that performs CKJM analysis, outputs the results in a text file, and ignores error messages
-    let mut application = if cfg!(target_os = "windows") {
-        std::process::Command::new("cmd")
-                            .args(&["/C", "java", "-jar", jar_path, project_path.to_str().unwrap(), ">", "metric_output.txt", "2>", "nul"])
-                            .current_dir(&ckjm_root_dir)
-                            .spawn()
-                            .expect("Failed to execute application")
-    } else {
-        std::process::Command::new("sh")
-                            .arg("-c")
-                            .arg(unix_arg)
-                            .current_dir(&ckjm_root_dir)
-                            .spawn()
-                            .expect("Failed to execute application")
-    };
-
-    let mut complete = false;
-    while !complete {
-        match application.try_wait() {
-            Ok(Some(_status)) => complete = true,
-            Ok(None) => complete = true,
-            Err(e) => println!("Error attempting to wait for application: {}", e)
-        }
-    }
-
-    let metric_output = File::open("metric_output.txt")?;
-    let reader = BufReader::new(metric_output);
 
     let mut metrics_output_path = ckjm_root_dir.clone();
     metrics_output_path.push("metrics_output.csv");
@@ -86,59 +46,78 @@ fn main() -> std::io::Result<()> {
                                     .append(true)
                                     .open(metrics_output_path.clone())
                                     .unwrap();
-    if let Err(e) = writeln!(metrics_output_file, "Project,WMC,CBO,LCOM,LOC") {
-      eprintln!("Could not add headers to metrics_output.csv, {}", e);
+
+    // Index 10 is LOC that should be summed instead of averaged
+                                        //0,1,  2,  3,  4,  5,   6, 7, 8,  9,    11, 12, 13, 14, 15,16, 17, 18
+    let metrics_headers = "Project,WMC,DIT,NOC,CBO,RFC,LCOM,Ca,Ce,NPM,LCOM3,DAM,MOA,MFA,CAM,IC,CBM,AMC,LOC";
+    if let Err(e) = writeln!(metrics_output_file, "{}", metrics_headers) {
+        eprintln!("Could not add headers to metrics_output.csv, {}", e);
     }
 
-    let wmc_idx = 0;
-    let cbo_idx = 3;
-    let lcom_idx = 5;
-    let loc_idx = 10;
+    for project_dir in std::fs::read_dir(projects_root_path.clone()).expect("Could not access subdirectory") {
+        let project_dir = project_dir.expect("Could not unwrap subdirectory");
+        // Skip all files because we only care about the folders containing .class files
+        if !std::fs::metadata(project_dir.path())?.is_dir() { continue; }
+        let mut project_path = project_dir.path().clone();
+        let project_name = project_dir.file_name();
+        project_path.push("*.class");
+        
+        let mut unix_arg = "java -jar ".to_owned();
+        unix_arg.push_str(&(vec![jar_path, project_path.to_str().unwrap(), "2>/dev/null"].join(" ").to_string()));
 
-    let mut metric_vec  = Vec::with_capacity(4 as usize);
-    for _ in 0..4 { metric_vec.push(Metric { num_classes: 0.0, sum_metric: 0.0 }); }
+        // Execute cross-platform command that performs CKJM analysis, outputs the results in a text file, and ignores error messages
+        let application = if cfg!(target_os = "windows") {
+            std::process::Command::new("cmd")
+                                .args(&["/C", "java", "-jar", jar_path, project_path.to_str().unwrap(), "2>", "nul"])
+                                .current_dir(&ckjm_root_dir)
+                                .output()
+                                .expect("Failed to execute application")
+        } else {
+            std::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(unix_arg)
+                                .current_dir(&ckjm_root_dir)
+                                .output()
+                                .expect("Failed to execute application")
+        };
+        
+        let ckjm_output = String::from_utf8_lossy(&application.stdout);
+        let metric_lines: Vec<&str> = ckjm_output.split("\n").collect();
+        let mut total_loc = 0.0;
+        let mut metric_vec  = Vec::with_capacity(NUM_METRICS);
+        for _ in 0..NUM_METRICS { metric_vec.push(Metric { num_classes: 0.0, sum_metric: 0.0 }); } // Initialize metrics
 
-    for metric_line in reader.lines() {
-        let mut current_metric_idx = 0;
-        for metric_iter in metric_line.unwrap().split_whitespace() {
-            if metric_iter == "~" { break; }
-            match metric_iter.parse::<f64>() {
-                Ok(n) => {
-                    if current_metric_idx == wmc_idx { 
-                        metric_vec[0].sum_metric += n;
-                        metric_vec[0].num_classes += 1.0;
-                    }
-                    else if current_metric_idx == cbo_idx {
-                        metric_vec[1].sum_metric += n;
-                        metric_vec[1].num_classes += 1.0;
-                    }
-                    else if current_metric_idx == lcom_idx {
-                        metric_vec[2].sum_metric += n;
-                        metric_vec[2].num_classes += 1.0;
-                    }
-                    else if current_metric_idx == loc_idx {
-                        metric_vec[3].sum_metric += n;
-                        metric_vec[3].num_classes += 1.0;
-                    }
-                    current_metric_idx += 1;
-                },
-                Err(_e) => {} // Ignore string and other types
+        for metric_line in metric_lines {
+            let mut current_metric_idx = 0; // Iterate through every metric
+            let mut added_metric_idx = 0; // Increment once metric is added to vector
+            if metric_line.contains("~") { continue; }
+            for metric in metric_line.split_whitespace() {
+                match metric.parse::<f64>() {
+                    Ok(n) => {
+                        if current_metric_idx == 10 { total_loc += n; }
+                        else {
+                            metric_vec[added_metric_idx].sum_metric += n;
+                            metric_vec[added_metric_idx].num_classes += 1.0;
+                            added_metric_idx += 1;
+                        }
+                        current_metric_idx += 1;
+                    },
+                    Err(_e) => {} // Ignore string and other types
+                }
             }
         }
-    }
+        
+        let mut metric_analysis = String::from(format!("{:?}{}", project_name, ","));
+        for i in 0..NUM_METRICS {
+            metric_analysis.push_str(&(metric_vec[i].sum_metric / metric_vec[i].num_classes).to_string());
+            metric_analysis.push(',');
+        }
+        metric_analysis.push_str(&total_loc.to_string());
+        metric_analysis.push(',');
 
-    let mut metric_analysis = String::from(format!("{}{}", project_name, ","));
-    metric_analysis.push_str(&(metric_vec[0].sum_metric / metric_vec[0].num_classes).to_string());
-    metric_analysis.push(',');
-    metric_analysis.push_str(&(metric_vec[1].sum_metric / metric_vec[1].num_classes).to_string());
-    metric_analysis.push(',');
-    metric_analysis.push_str(&(metric_vec[2].sum_metric / metric_vec[2].num_classes).to_string());
-    metric_analysis.push(',');
-    metric_analysis.push_str(&metric_vec[3].sum_metric.to_string());
-    metric_analysis.push(',');
-
-    if let Err(e) = writeln!(metrics_output_file, "{}", metric_analysis) {
-      eprintln!("Could not add metrics to metrics_output.csv, {}", e);
+        if let Err(e) = writeln!(metrics_output_file, "{}", metric_analysis) {
+            eprintln!("Could not add metrics to metrics_output.csv, {}", e);
+        }
     }
 
     Ok(())
