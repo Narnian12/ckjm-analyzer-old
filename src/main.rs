@@ -3,6 +3,7 @@ extern crate fs_extra;
 extern crate clap;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
+use std::path::PathBuf;
 use clap::{Arg, App};
 
 struct Metric {
@@ -29,7 +30,7 @@ fn main() -> std::io::Result<()> {
                             .long("path")
                             .required(true)
                             .value_name("PROJECTS_PATH")
-                            .help("Sets the path to the `projects` folder with sub-folders of projects containing the .class files to analyze"))
+                            .help("Sets the path to a folder with sub-folders of projects containing the .class files to analyze"))
                         .get_matches();
 
     let jar_path = matches.value_of("jar").unwrap();
@@ -47,8 +48,6 @@ fn main() -> std::io::Result<()> {
                                     .open(metrics_output_path.clone())
                                     .unwrap();
 
-    // Index 10 is LOC that should be summed instead of averaged
-                                        //0,1,  2,  3,  4,  5,   6, 7, 8,  9,    11, 12, 13, 14, 15,16, 17, 18
     let metrics_headers = "Project,WMC,DIT,NOC,CBO,RFC,LCOM,Ca,Ce,NPM,LCOM3,DAM,MOA,MFA,CAM,IC,CBM,AMC,LOC";
     if let Err(e) = writeln!(metrics_output_file, "{}", metrics_headers) {
         eprintln!("Could not add headers to metrics_output.csv, {}", e);
@@ -58,17 +57,17 @@ fn main() -> std::io::Result<()> {
         let project_dir = project_dir.expect("Could not unwrap subdirectory");
         // Skip all files because we only care about the folders containing .class files
         if !std::fs::metadata(project_dir.path())?.is_dir() { continue; }
-        let mut project_path = project_dir.path().clone();
+
+        let project_path = project_dir.path().clone();
         let project_name = project_dir.file_name();
-        project_path.push("*.class");
-        
-        let mut unix_arg = "java -jar ".to_owned();
-        unix_arg.push_str(&(vec![jar_path, project_path.to_str().unwrap(), "2>/dev/null"].join(" ").to_string()));
+
+        let mut unix_arg = "find ".to_owned();
+        unix_arg.push_str(&vec![project_path.to_str().unwrap(), "-name '*.class' -print | java -jar", jar_path, "2>/dev/null"].join(" ").to_string());
 
         // Execute cross-platform command that performs CKJM analysis, outputs the results in a text file, and ignores error messages
         let application = if cfg!(target_os = "windows") {
             std::process::Command::new("cmd")
-                                .args(&["/C", "java", "-jar", jar_path, project_path.to_str().unwrap(), "2>", "nul"])
+                                .args(&["/C", "find", project_path.to_str().unwrap(), "-name", "'*.class'", "-print", "|", "java", "-jar", "2>", "nul"])
                                 .current_dir(&ckjm_root_dir)
                                 .output()
                                 .expect("Failed to execute application")
@@ -94,6 +93,7 @@ fn main() -> std::io::Result<()> {
             for metric in metric_line.split_whitespace() {
                 match metric.parse::<f64>() {
                     Ok(n) => {
+                        // The 10th index in the CKJM metrics is LOC
                         if current_metric_idx == 10 { total_loc += n; }
                         else {
                             metric_vec[added_metric_idx].sum_metric += n;
