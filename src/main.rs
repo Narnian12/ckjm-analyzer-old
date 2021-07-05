@@ -3,7 +3,6 @@ extern crate fs_extra;
 extern crate clap;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::path::PathBuf;
 use clap::{Arg, App};
 
 struct Metric {
