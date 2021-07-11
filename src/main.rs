@@ -66,8 +66,8 @@ fn main() -> std::io::Result<()> {
         // Execute cross-platform command that performs CKJM analysis, outputs the results in a text file, and ignores error messages
         let application = if cfg!(target_os = "windows") {
             std::process::Command::new("cmd")
-                                .args(&["/C", "find", project_path.to_str().unwrap(), "-name", "'*.class'", "-print", "|", "java", "-jar", "2>", "nul"])
-                                .current_dir(&ckjm_root_dir)
+                                .args(&["/C", "dir", "/b", "/s", "*.class", "|", "findstr", "/v", ".class.", "|", "java", "-jar", jar_path, "2>", "nul"])
+                                .current_dir(&project_dir.path())
                                 .output()
                                 .expect("Failed to execute application")
         } else {
