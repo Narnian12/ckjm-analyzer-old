@@ -14,8 +14,8 @@ Prints version information
 
 ## OPTIONS
 ### -j, --jar <JAR_PATH>
-Sets the path to the CKJM Extended JAR file
+Sets the path to the CKJM Extended JAR file. Must be an absolute path.
 
 ### -p, --path <PROJECTS_PATH>
 
-Sets the path to a folder with sub-folders of projects containing the .class files to analyze
+Sets the path to a folder with sub-folders of projects containing the .class files to analyze. Must be an absolute path.

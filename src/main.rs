@@ -17,19 +17,19 @@ fn main() -> std::io::Result<()> {
     let matches = App::new("CKJM Analyzer")
                         .version("0.1")
                         .author("Peter Sun, <pysun@oakland.edu")
-                        .about("Application used to analyze specific metrics from the CKJM Extended Tool")
+                        .about("Application used to analyze specific metrics from the CKJM Extended Tool.")
                         .arg(Arg::with_name("jar")
                             .short("j")
                             .long("jar")
                             .required(true)
                             .value_name("JAR_PATH")
-                            .help("Sets the path to the CKJM Extended JAR file"))
+                            .help("Sets the path to the CKJM Extended JAR file. Must be an absolute path."))
                         .arg(Arg::with_name("path")
                             .short("p")
                             .long("path")
                             .required(true)
                             .value_name("PROJECTS_PATH")
-                            .help("Sets the path to a folder with sub-folders of projects containing the .class files to analyze"))
+                            .help("Sets the path to a folder with sub-folders of projects containing the .class files to analyze. Must be an absolute path"))
                         .get_matches();
 
     let jar_path = matches.value_of("jar").unwrap();
