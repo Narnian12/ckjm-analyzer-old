@@ -89,19 +89,29 @@ fn main() -> std::io::Result<()> {
             let mut current_metric_idx = 0; // Iterate through every metric
             let mut added_metric_idx = 0; // Increment once metric is added to vector
             if metric_line.contains("~") { continue; }
-            for metric in metric_line.split_whitespace() {
-                match metric.parse::<f64>() {
-                    Ok(n) => {
+            else if metric_line.contains("fieldTypes - ") {
+                let type_line = String::from(metric_line).replace("javaTypes - ", "");
+                let types: Vec<&str> = type_line.split(',').collect();
+                println!("{:?}", types);
+            }
+            else {
+                for metric in metric_line.split_whitespace() {
+                    let float_parse = metric.parse::<f64>();
+                    if float_parse.is_ok() {
+                        let metric_val = float_parse.unwrap();
                         // The 10th index in the CKJM metrics is LOC
-                        if current_metric_idx == 10 { total_loc += n; }
+                        if current_metric_idx == 10 { total_loc += metric_val; }
                         else {
-                            metric_vec[added_metric_idx].sum_metric += n;
+                            metric_vec[added_metric_idx].sum_metric += metric_val;
                             metric_vec[added_metric_idx].num_classes += 1.0;
                             added_metric_idx += 1;
                         }
                         current_metric_idx += 1;
-                    },
-                    Err(_e) => {} // Ignore string and other types
+                    }
+                    // Non-float will be class name
+                    else {
+    
+                    }
                 }
             }
         }
