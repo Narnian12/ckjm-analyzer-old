@@ -4,6 +4,7 @@ extern crate clap;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use clap::{Arg, App};
+use array_tool::vec::Intersect;
 
 struct Metric {
     num_classes: f64,
@@ -89,10 +90,12 @@ fn main() -> std::io::Result<()> {
             let mut current_metric_idx = 0; // Iterate through every metric
             let mut added_metric_idx = 0; // Increment once metric is added to vector
             if metric_line.contains("~") { continue; }
-            else if metric_line.contains("fieldTypes - ") {
-                let type_line = String::from(metric_line).replace("javaTypes - ", "");
-                let types: Vec<&str> = type_line.split(',').collect();
-                println!("{:?}", types);
+            else if metric_line.contains("fieldTypes - ,") {
+                let types: Vec<&str> = metric_line.split(',').collect();
+                for field_type in types.iter().skip(1) {
+                    println!("{}", field_type);
+                }
+                // println!("{:?}", types);
             }
             else {
                 for metric in metric_line.split_whitespace() {
