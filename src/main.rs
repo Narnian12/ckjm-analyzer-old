@@ -5,6 +5,8 @@ use std::fs::OpenOptions;
 use std::io::prelude::*;
 use clap::{Arg, App};
 use array_tool::vec::Intersect;
+mod maintainability;
+mod reusability;
 
 struct MetricRange {
   min: f64,
@@ -24,8 +26,6 @@ const MFA: i32 = 13;
 
 const OUTLIER: f64 = 0.15;
 const MAINTAINABILITY_TOTAL: f64 = 35.0;
-const MIN: usize = 0;
-const MAX: usize = 1;
 
 fn main() -> std::io::Result<()> {
     // Parse command line arguments
@@ -106,20 +106,21 @@ fn main() -> std::io::Result<()> {
 
         // Variables for maintainability analysis
         let mut cbo_values: Vec<f64> = Vec::new();
-        let mut cbo_range = MetricRange { min: -999.0, max: 999.0 };
+        let mut cbo_range = MetricRange { min: f64::MAX, max: f64::MIN };
         let mut dit_values: Vec<f64> = Vec::new();
-        let mut dit_range = MetricRange { min: -999.0, max: 999.0 };
+        let mut dit_range = MetricRange { min: f64::MAX, max: f64::MIN };
         let mut lcom_values: Vec<f64> = Vec::new();
-        let mut lcom_range = MetricRange { min: -999.0, max: 999.0 };
+        let mut lcom_range = MetricRange { min: f64::MAX, max: f64::MIN };
         let mut noc_values: Vec<f64> = Vec::new();
-        let mut noc_range = MetricRange { min: -999.0, max: 999.0 };
+        let mut noc_range = MetricRange { min: f64::MAX, max: f64::MIN };
         let mut wmc_nom_values: Vec<f64> = Vec::new();
-        let mut wmc_nom_range = MetricRange { min: -999.0, max: 999.0 };
+        let mut wmc_nom_range = MetricRange { min: f64::MAX, max: f64::MIN };
 
         // Variables for reusability analysis
         let mut dam_values: Vec<f64> = Vec::new();
         let mut mfa_values: Vec<f64> = Vec::new();
 
+        // Iterate through CKJM-Extended output
         for metric_line in metric_lines {
             let mut current_metric_idx = 0; // Iterate through every metric
             if metric_line.contains("~") { continue; }
@@ -130,10 +131,13 @@ fn main() -> std::io::Result<()> {
             else if metric_line.contains("methodTypes - ,") {
                 let types: Vec<&str> = metric_line.split(',').collect();
                 for method_type in types.iter().skip(1) { methods.push(&method_type); }
-                field_method_int.push(fields.intersect(methods.clone()));
+                let mut intersection = fields.intersect(methods.clone());
+                // Trim to remove carriage return escape characters
+                for int in intersection.iter_mut() { *int = int.trim(); }
+                field_method_int.push(intersection);
             }
-            else {
-                for metric_or_name in metric_line.split_whitespace() {
+            else if metric_line.contains("metrics - ") {
+                for metric_or_name in metric_line.split_whitespace().into_iter().skip(2) {
                     let float_parse = metric_or_name.parse::<f64>();
                     if float_parse.is_ok() {
                         let metric_val = float_parse.unwrap();
@@ -175,6 +179,8 @@ fn main() -> std::io::Result<()> {
                 }
             }
         }
+        // Finish iterating through CKJM-Extended output
+
         let cbo_limit = (cbo_range.max - cbo_range.min) * OUTLIER;
         let dit_limit = (dit_range.max - dit_range.min) * OUTLIER;
         let lcom_limit = (lcom_range.max - lcom_range.min) * OUTLIER;
@@ -190,59 +196,22 @@ fn main() -> std::io::Result<()> {
 
         // Total number of classes that involve DI
         let mut di_classes = 0;
-        // Sum of weighted metric if they exceed the upper/lower 15% bounds
-        let mut analyzability_metric = 0.0;
-        let mut changeability_metric = 0.0;
-        let mut stability_metric = 0.0;
-        let mut testability_metric = 0.0;
-        // Sum of all reusability computations across classes
-        let mut reusability_metric = 0.0;
 
-        // Iterate through all classes and perform DI, maintainability and reusability analysis
-        for i in 0..(class_names.len() - 1) {
+        // Iterate through all classes and perform DI analysis
+        for i in 0..(class_names.len()) {
             if i == field_method_int.len() { break; }
             // If class implements constructor-based or setter-based dependency injection, include it as a DI class
-            if field_method_int[i].intersect(class_names.clone()).len() > 1 { di_classes += 1; }
-            // Metric quantities are added based on weights according to this paper - http://www.cs.umd.edu/~pugh/ISSTA08/issta2008/p131.pdf
-            if cbo_values[i] >= cbo_limits[MIN] || cbo_values[i] <= cbo_limits[MAX] { 
-                analyzability_metric += 2.0;
-                changeability_metric += 2.0;
-                stability_metric += 2.0;
-                testability_metric += 2.0;
-            }
-            if dit_values[i] >= dit_limits[MIN] || dit_values[i] <= dit_limits[MAX] {
-                analyzability_metric += 2.0;
-                changeability_metric += 2.0;
-                stability_metric += 1.0;
-                testability_metric += 2.0;
-            }
-            if lcom_values[i] >= lcom_limits[MIN] || lcom_values[i] <= lcom_limits[MAX] {
-                analyzability_metric += 2.0;
-                changeability_metric += 2.0;
-                stability_metric += 2.0;
-                testability_metric += 2.0;
-            }
-            if noc_values[i] >= noc_limits[MIN] || noc_values[i] <= noc_limits[MAX] {
-                analyzability_metric += 1.0;
-                changeability_metric += 2.0;
-                stability_metric += 1.0;
-                testability_metric += 1.0;
-            }
-            if wmc_nom_values[i] >= wmc_nom_limits[MIN] || wmc_nom_values[i] <= wmc_nom_limits[MAX] {
-                analyzability_metric += 2.0;
-                changeability_metric += 2.0;
-                stability_metric += 1.0;
-                testability_metric += 2.0;
-            }
-            // Use reusability multiple regression model from paper here - https://www.scirp.org/pdf/JSEA_2015041418363656.pdf
-            reusability_metric += -37.111 + (3.973 * cbo_values[i]) + (32.500 * mfa_values[i]) + (20.709 * dam_values[i]);
+            if field_method_int[i].intersect(class_names.clone()).len() > 0 { di_classes += 1; }
         }
         
-        let maintainability_metric = analyzability_metric + changeability_metric + stability_metric + testability_metric;
+        let maintainability_metric = maintainability::compute_maintainability_metric(&cbo_values, cbo_limits, dit_values, dit_limits, lcom_values, lcom_limits, 
+            noc_values, noc_limits, wmc_nom_values, wmc_nom_limits);
+        let reusability_metric = reusability::compute_reusability_metric(&cbo_values, mfa_values, dam_values);
+
         let mut metric_analysis = String::from(format!("{:?}{}", project_name, ","));
         metric_analysis.push_str(&(di_classes as f64 / class_names.len() as f64).to_string());
         metric_analysis.push(',');
-        metric_analysis.push_str(&(maintainability_metric / (MAINTAINABILITY_TOTAL * class_names.len() as f64)).to_string());
+        metric_analysis.push_str(&(1.0 - (maintainability_metric / (MAINTAINABILITY_TOTAL * class_names.len() as f64))).to_string());
         metric_analysis.push(',');
         metric_analysis.push_str(&(reusability_metric / class_names.len() as f64).to_string());
         metric_analysis.push(',');
