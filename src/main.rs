@@ -9,8 +9,13 @@ mod maintainability;
 mod reusability;
 
 struct MetricRange {
-  min: f64,
-  max: f64
+    min: f64,
+    max: f64
+}
+
+struct MetricMean {
+    acc: f64,
+    count: f64
 }
 
 // Indices for metrics
@@ -62,7 +67,7 @@ fn main() -> std::io::Result<()> {
                                     .open(metrics_output_path.clone())
                                     .unwrap();
 
-    let metrics_headers = "Project,DI,MAI,REU,LOC";
+    let metrics_headers = "Project,DI,MAI,REU,LOC,CBO,DIT,LCOM,NOC,WMC-NOM,MFA,DAM";
     if let Err(e) = writeln!(metrics_output_file, "{}", metrics_headers) {
         eprintln!("Could not add headers to metrics_output.csv, {}", e);
     }
@@ -120,6 +125,15 @@ fn main() -> std::io::Result<()> {
         let mut dam_values: Vec<f64> = Vec::new();
         let mut mfa_values: Vec<f64> = Vec::new();
 
+        // Variables for metrics mean analysis
+        let mut mean_cbo = MetricMean { acc: 0.0, count: 0.0 };
+        let mut mean_dit = MetricMean { acc: 0.0, count: 0.0 };
+        let mut mean_lcom = MetricMean { acc: 0.0, count: 0.0 };
+        let mut mean_noc = MetricMean { acc: 0.0, count: 0.0 };
+        let mut mean_wmc_nom = MetricMean { acc: 0.0, count: 0.0 };
+        let mut mean_mfa = MetricMean { acc: 0.0, count: 0.0 };
+        let mut mean_dam = MetricMean { acc: 0.0, count: 0.0 };
+
         // Iterate through CKJM-Extended output
         for metric_line in metric_lines {
             let mut current_metric_idx = 0; // Iterate through every metric
@@ -146,30 +160,48 @@ fn main() -> std::io::Result<()> {
                                 wmc_nom_values.push(metric_val);
                                 wmc_nom_range.min = wmc_nom_range.min.min(metric_val);
                                 wmc_nom_range.max = wmc_nom_range.max.max(metric_val);
+                                mean_wmc_nom.acc += metric_val;
+                                mean_wmc_nom.count += 1.0;
                             }
                             DIT => {
                                 dit_values.push(metric_val);
                                 dit_range.min = dit_range.min.min(metric_val);
                                 dit_range.max = dit_range.max.max(metric_val);
+                                mean_dit.acc += metric_val;
+                                mean_dit.count += 1.0;
                             }
                             NOC => {
                                 noc_values.push(metric_val);
                                 noc_range.min = noc_range.min.min(metric_val);
                                 noc_range.max = noc_range.max.max(metric_val);
+                                mean_noc.acc += metric_val;
+                                mean_noc.count += 1.0;
                             }
                             CBO => {
                                 cbo_values.push(metric_val);
                                 cbo_range.min = cbo_range.min.min(metric_val);
                                 cbo_range.max = cbo_range.max.max(metric_val);
+                                mean_cbo.acc += metric_val;
+                                mean_cbo.count += 1.0;
                             }
                             LCOM => {
                                 lcom_values.push(metric_val);
                                 lcom_range.min = lcom_range.min.min(metric_val);
                                 lcom_range.max = lcom_range.max.max(metric_val);
+                                mean_lcom.acc += metric_val;
+                                mean_lcom.count += 1.0;
                             }
                             LOC => { total_loc += metric_val; }
-                            DAM => { dam_values.push(metric_val); }
-                            MFA => { mfa_values.push(metric_val); }
+                            DAM => { 
+                              dam_values.push(metric_val);
+                              mean_dam.acc += metric_val;
+                              mean_dam.count += 1.0;
+                            }
+                            MFA => {
+                              mfa_values.push(metric_val);
+                              mean_mfa.acc += metric_val;
+                              mean_mfa.count += 1.0;
+                            }
                             _ => {}
                         }
                         current_metric_idx += 1;
@@ -216,6 +248,20 @@ fn main() -> std::io::Result<()> {
         metric_analysis.push_str(&(reusability_metric / class_names.len() as f64).to_string());
         metric_analysis.push(',');
         metric_analysis.push_str(&total_loc.to_string());
+        metric_analysis.push(',');
+        metric_analysis.push_str(&(mean_cbo.acc / mean_cbo.count).to_string());
+        metric_analysis.push(',');
+        metric_analysis.push_str(&(mean_dit.acc / mean_dit.count).to_string());
+        metric_analysis.push(',');
+        metric_analysis.push_str(&(mean_lcom.acc / mean_lcom.count).to_string());
+        metric_analysis.push(',');
+        metric_analysis.push_str(&(mean_noc.acc / mean_noc.count).to_string());
+        metric_analysis.push(',');
+        metric_analysis.push_str(&(mean_wmc_nom.acc / mean_wmc_nom.count).to_string());
+        metric_analysis.push(',');
+        metric_analysis.push_str(&(mean_mfa.acc / mean_mfa.count).to_string());
+        metric_analysis.push(',');
+        metric_analysis.push_str(&(mean_dam.acc / mean_dam.count).to_string());
 
         if let Err(e) = writeln!(metrics_output_file, "{}", metric_analysis) {
             eprintln!("Could not add metrics to metrics_output.csv, {}", e);
