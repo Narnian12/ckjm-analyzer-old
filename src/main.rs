@@ -241,26 +241,16 @@ fn main() -> std::io::Result<()> {
         let reusability_metric = reusability::compute_reusability_metric(&cbo_values, mfa_values, dam_values);
 
         let mut metric_analysis = String::from(format!("{:?}{}", project_name, ","));
-        metric_analysis.push_str(&(di_classes as f64 / class_names.len() as f64).to_string());
-        metric_analysis.push(',');
-        metric_analysis.push_str(&(1.0 - (maintainability_metric / (MAINTAINABILITY_TOTAL * class_names.len() as f64))).to_string());
-        metric_analysis.push(',');
-        metric_analysis.push_str(&(reusability_metric / class_names.len() as f64).to_string());
-        metric_analysis.push(',');
-        metric_analysis.push_str(&total_loc.to_string());
-        metric_analysis.push(',');
-        metric_analysis.push_str(&(mean_cbo.acc / mean_cbo.count).to_string());
-        metric_analysis.push(',');
-        metric_analysis.push_str(&(mean_dit.acc / mean_dit.count).to_string());
-        metric_analysis.push(',');
-        metric_analysis.push_str(&(mean_lcom.acc / mean_lcom.count).to_string());
-        metric_analysis.push(',');
-        metric_analysis.push_str(&(mean_noc.acc / mean_noc.count).to_string());
-        metric_analysis.push(',');
-        metric_analysis.push_str(&(mean_wmc_nom.acc / mean_wmc_nom.count).to_string());
-        metric_analysis.push(',');
-        metric_analysis.push_str(&(mean_mfa.acc / mean_mfa.count).to_string());
-        metric_analysis.push(',');
+        metric_analysis.push_str(&vec![(di_classes as f64 / class_names.len() as f64).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(1.0 - (maintainability_metric / (MAINTAINABILITY_TOTAL * class_names.len() as f64))).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(reusability_metric / class_names.len() as f64).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![total_loc.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(mean_cbo.acc / mean_cbo.count).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(mean_dit.acc / mean_dit.count).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(mean_lcom.acc / mean_lcom.count).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(mean_noc.acc / mean_noc.count).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(mean_wmc_nom.acc / mean_wmc_nom.count).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(mean_mfa.acc / mean_mfa.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&(mean_dam.acc / mean_dam.count).to_string());
 
         if let Err(e) = writeln!(metrics_output_file, "{}", metric_analysis) {
