@@ -1,12 +1,14 @@
 extern crate execute;
 extern crate fs_extra;
 extern crate clap;
+extern crate minidom;
+use minidom::Element;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use clap::{Arg, App};
 use array_tool::vec::Intersect;
+use walkdir::WalkDir;
 mod maintainability;
-mod reusability;
 
 struct MetricRange {
     min: f64,
@@ -26,8 +28,6 @@ const NOC: i32 = 2;
 const CBO: i32 = 3;
 const LCOM: i32 = 5;
 const LOC: i32 = 10;
-const DAM: i32 = 11;
-const MFA: i32 = 13;
 
 const OUTLIER: f64 = 0.15;
 const MAINTAINABILITY_TOTAL: f64 = 35.0;
@@ -67,7 +67,7 @@ fn main() -> std::io::Result<()> {
                                     .open(metrics_output_path.clone())
                                     .unwrap();
 
-    let metrics_headers = "Project,DI,MAI,REU,LOC,CBO,DIT,LCOM,NOC,WMC-NOM,MFA,DAM";
+    let metrics_headers = "Project,DI,MAI,LOC,CBO,DIT,LCOM,NOC,WMC-NOM";
     if let Err(e) = writeln!(metrics_output_file, "{}", metrics_headers) {
         eprintln!("Could not add headers to metrics_output.csv, {}", e);
     }
@@ -76,8 +76,25 @@ fn main() -> std::io::Result<()> {
         let project_dir = project_dir.expect("Could not unwrap subdirectory");
         // Skip all files because we only care about the folders containing .class files
         if !std::fs::metadata(project_dir.path())?.is_dir() { continue; }
-
         let project_path = project_dir.path().clone();
+
+        // Find classes injected via XML-injection
+        let mut xml_di_string: String = String::new();
+        for entry in WalkDir::new(project_path.clone()) {
+            let class_file = entry.unwrap();
+            // Find all class files within the project
+            if class_file.path().extension().is_some() && class_file.path().extension().unwrap() == "xml" {
+                let xml = std::fs::read_to_string(class_file.path())?;
+                let xml_root: Element = xml.parse().unwrap();
+                for child in xml_root.children() {
+                    if child.is("bean", xml_root.ns().as_str()) {
+                        xml_di_string.push_str(&vec![",".to_string(), child.attr("class").unwrap().to_string()].join(""));
+                    }
+                }
+            }
+        }
+        let xml_di_classes: Vec<&str> = xml_di_string.split(',').collect();
+        println!("{:?}", xml_di_classes);
         let project_name = project_dir.file_name();
 
         let mut unix_arg = "find ".to_owned();
@@ -121,18 +138,12 @@ fn main() -> std::io::Result<()> {
         let mut wmc_nom_values: Vec<f64> = Vec::new();
         let mut wmc_nom_range = MetricRange { min: f64::MAX, max: f64::MIN };
 
-        // Variables for reusability analysis
-        let mut dam_values: Vec<f64> = Vec::new();
-        let mut mfa_values: Vec<f64> = Vec::new();
-
         // Variables for metrics mean analysis
         let mut mean_cbo = MetricMean { acc: 0.0, count: 0.0 };
         let mut mean_dit = MetricMean { acc: 0.0, count: 0.0 };
         let mut mean_lcom = MetricMean { acc: 0.0, count: 0.0 };
         let mut mean_noc = MetricMean { acc: 0.0, count: 0.0 };
         let mut mean_wmc_nom = MetricMean { acc: 0.0, count: 0.0 };
-        let mut mean_mfa = MetricMean { acc: 0.0, count: 0.0 };
-        let mut mean_dam = MetricMean { acc: 0.0, count: 0.0 };
 
         // Iterate through CKJM-Extended output
         for metric_line in metric_lines {
@@ -192,16 +203,6 @@ fn main() -> std::io::Result<()> {
                                 mean_lcom.count += 1.0;
                             }
                             LOC => { total_loc += metric_val; }
-                            DAM => { 
-                              dam_values.push(metric_val);
-                              mean_dam.acc += metric_val;
-                              mean_dam.count += 1.0;
-                            }
-                            MFA => {
-                              mfa_values.push(metric_val);
-                              mean_mfa.acc += metric_val;
-                              mean_mfa.count += 1.0;
-                            }
                             _ => {}
                         }
                         current_metric_idx += 1;
@@ -238,20 +239,16 @@ fn main() -> std::io::Result<()> {
         
         let maintainability_metric = maintainability::compute_maintainability_metric(&cbo_values, cbo_limits, dit_values, dit_limits, lcom_values, lcom_limits, 
             noc_values, noc_limits, wmc_nom_values, wmc_nom_limits);
-        let reusability_metric = reusability::compute_reusability_metric(&cbo_values, mfa_values, dam_values);
 
         let mut metric_analysis = String::from(format!("{:?}{}", project_name, ","));
         metric_analysis.push_str(&vec![(di_classes as f64 / class_names.len() as f64).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(1.0 - (maintainability_metric / (MAINTAINABILITY_TOTAL * class_names.len() as f64))).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(reusability_metric / class_names.len() as f64).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![total_loc.to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_cbo.acc / mean_cbo.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_dit.acc / mean_dit.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_lcom.acc / mean_lcom.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_noc.acc / mean_noc.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_wmc_nom.acc / mean_wmc_nom.count).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(mean_mfa.acc / mean_mfa.count).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&(mean_dam.acc / mean_dam.count).to_string());
 
         if let Err(e) = writeln!(metrics_output_file, "{}", metric_analysis) {
             eprintln!("Could not add metrics to metrics_output.csv, {}", e);

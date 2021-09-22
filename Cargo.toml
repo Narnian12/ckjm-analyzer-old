@@ -3,10 +3,10 @@ name = "ckjm_analyzer"
 version = "0.1.0"
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 fs_extra = "1.2.0"
 execute = "0.2.8"
 clap = "~2.33"
 array_tool = "1.0.3"
+walkdir = "2.3.2"
+minidom = "*"
