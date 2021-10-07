@@ -6,7 +6,7 @@ use minidom::Element;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use clap::{Arg, App};
-use array_tool::vec::Intersect;
+use array_tool::vec::{Intersect, Union};
 use walkdir::WalkDir;
 mod maintainability;
 
@@ -93,8 +93,14 @@ fn main() -> std::io::Result<()> {
                 }
             }
         }
-        let xml_di_classes: Vec<&str> = xml_di_string.split(',').collect();
-        println!("{:?}", xml_di_classes);
+        let unprocessed_xml_di_classes: Vec<&str> = xml_di_string.split(',').collect();
+        // Contains final processed class names injected via XML
+        let mut xml_di_classes: Vec<&str> = Vec::new();
+        for unprocessed_class in unprocessed_xml_di_classes {
+            let split_xml_di_classes: Vec<&str> = unprocessed_class.split('.').collect();
+            xml_di_classes.push(split_xml_di_classes[split_xml_di_classes.len() - 1]);
+        }
+
         let project_name = project_dir.file_name();
 
         let mut unix_arg = "find ".to_owned();
@@ -233,8 +239,10 @@ fn main() -> std::io::Result<()> {
         // Iterate through all classes and perform DI analysis
         for i in 0..(class_names.len()) {
             if i == field_method_int.len() { break; }
+            // Generate complete set of DI classes
+            let union_di_classes = xml_di_classes.union(field_method_int[i].clone());
             // If class implements constructor-based or setter-based dependency injection, include it as a DI class
-            if field_method_int[i].intersect(class_names.clone()).len() > 0 { di_classes += 1; }
+            if union_di_classes.intersect(class_names.clone()).len() > 0 { di_classes += 1; }
         }
         
         let maintainability_metric = maintainability::compute_maintainability_metric(&cbo_values, cbo_limits, dit_values, dit_limits, lcom_values, lcom_limits, 
