@@ -67,7 +67,7 @@ fn main() -> std::io::Result<()> {
                                     .open(metrics_output_path.clone())
                                     .unwrap();
 
-    let metrics_headers = "Project,DI,MAI,LOC,CBO,DIT,LCOM,NOC,WMC-NOM";
+    let metrics_headers = "Project,DI,MAI,LOC,CBO,DIT,LCOM,NOC,WMC-NOM,DIWCBO";
     if let Err(e) = writeln!(metrics_output_file, "{}", metrics_headers) {
         eprintln!("Could not add headers to metrics_output.csv, {}", e);
     }
@@ -257,6 +257,7 @@ fn main() -> std::io::Result<()> {
         metric_analysis.push_str(&vec![(mean_lcom.acc / mean_lcom.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_noc.acc / mean_noc.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_wmc_nom.acc / mean_wmc_nom.count).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![((mean_cbo.acc / mean_cbo.count) + (class_names.len() as f64 - di_classes as f64)).to_string(), ','.to_string()].join(""));
 
         if let Err(e) = writeln!(metrics_output_file, "{}", metric_analysis) {
             eprintln!("Could not add metrics to metrics_output.csv, {}", e);
