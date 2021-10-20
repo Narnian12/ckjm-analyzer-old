@@ -8,6 +8,7 @@ use std::io::prelude::*;
 use clap::{Arg, App};
 use array_tool::vec::{Intersect, Union};
 use walkdir::WalkDir;
+use itertools::Itertools;
 mod maintainability;
 
 struct MetricRange {
@@ -67,7 +68,7 @@ fn main() -> std::io::Result<()> {
                                     .open(metrics_output_path.clone())
                                     .unwrap();
 
-    let metrics_headers = "Project,DI,MAI,LOC,CBO,DIT,LCOM,NOC,WMC-NOM,DIWCBO";
+    let metrics_headers = "Project,DI,MAI,LOC,CBO,DIW-CBO,DIT,LCOM,NOC,WMC-NOM";
     if let Err(e) = writeln!(metrics_output_file, "{}", metrics_headers) {
         eprintln!("Could not add headers to metrics_output.csv, {}", e);
     }
@@ -125,16 +126,19 @@ fn main() -> std::io::Result<()> {
         let ckjm_output = String::from_utf8_lossy(&application.stdout);
         let metric_lines: Vec<&str> = ckjm_output.split("\n").collect();
         let mut total_loc = 0.0;
+        let mut di_params = 0.0;
+        let mut num_params = 0.0;
 
         // Variables for DI analysis
-        let mut fields: Vec<&str> = Vec::new();
-        let mut methods: Vec<&str> = Vec::new();
-        let mut field_method_int: Vec<Vec<&str>> = Vec::new();
+        let mut field_params: Vec<&str> = Vec::new();
+        let mut method_params: Vec<&str> = Vec::new();
         let mut class_names: Vec<&str> = Vec::new();
 
         // Variables for maintainability analysis
         let mut cbo_values: Vec<f64> = Vec::new();
         let mut cbo_range = MetricRange { min: f64::MAX, max: f64::MIN };
+        let mut diw_cbo_values: Vec<f64> = Vec::new();
+        let mut diw_cbo_range = MetricRange { min: f64::MAX, max: f64::MIN };
         let mut dit_values: Vec<f64> = Vec::new();
         let mut dit_range = MetricRange { min: f64::MAX, max: f64::MIN };
         let mut lcom_values: Vec<f64> = Vec::new();
@@ -146,10 +150,19 @@ fn main() -> std::io::Result<()> {
 
         // Variables for metrics mean analysis
         let mut mean_cbo = MetricMean { acc: 0.0, count: 0.0 };
+        let mut mean_diw_cbo = MetricMean { acc: 0.0, count: 0.0 };
         let mut mean_dit = MetricMean { acc: 0.0, count: 0.0 };
         let mut mean_lcom = MetricMean { acc: 0.0, count: 0.0 };
         let mut mean_noc = MetricMean { acc: 0.0, count: 0.0 };
         let mut mean_wmc_nom = MetricMean { acc: 0.0, count: 0.0 };
+
+        // Generate all class names for DI analysis
+        for metric_line in metric_lines.clone() {
+          if metric_line.contains("metrics - ") {
+            let metric: Vec<&str> = metric_line.split_whitespace().collect();
+            class_names.push(metric[2]);
+          }
+        }
 
         // Iterate through CKJM-Extended output
         for metric_line in metric_lines {
@@ -157,15 +170,41 @@ fn main() -> std::io::Result<()> {
             if metric_line.contains("~") { continue; }
             else if metric_line.contains("fieldTypes - ,") {
                 let types: Vec<&str> = metric_line.split(',').collect();
-                for field_type in types.iter().skip(1) { fields.push(&field_type); }
+                for field_type in types.iter().skip(1) { field_params.push(&field_type); }
             }
-            else if metric_line.contains("methodTypes - ,") {
-                let types: Vec<&str> = metric_line.split(',').collect();
-                for method_type in types.iter().skip(1) { methods.push(&method_type); }
-                let mut intersection = fields.intersect(methods.clone());
-                // Trim to remove carriage return escape characters
-                for int in intersection.iter_mut() { *int = int.trim(); }
-                field_method_int.push(intersection);
+            else if metric_line.contains("methods - ") {
+                let types: Vec<&str> = metric_line.split(",").collect();
+                for method_type in types.iter().skip(1) {
+                  if method_type.contains("methods - ") { continue; }
+                  else if method_type.contains("methodTypes") {
+                    // If methods vector is empty, there are no parameters 
+                    if method_params.len() == 0 { continue; }
+                    // ELSE
+                    // First find the union of the method params with XML DI params
+                    // This will be a vector of all params potentially being sent into the class
+                    let xml_and_method_params = method_params.union(xml_di_classes.clone());
+                    // Next find the intersection of the previous union with all class names
+                    // This will filter out primitive types from being considered DI
+                    let mut filtered_xml_and_method_params = xml_and_method_params.intersect(class_names.clone());
+                    // Filter out duplicate params because we will consider two classes to be coupled to each other if they
+                    // depend on each other at least once
+                    filtered_xml_and_method_params = filtered_xml_and_method_params.into_iter().unique().collect();
+                    // Next find the intersection of the field params with all class names
+                    // This will also filter out primitive types within field params
+                    let mut filtered_field_params = field_params.intersect(class_names.clone());
+                    // Again filter out duplicate params
+                    filtered_field_params = filtered_field_params.into_iter().unique().collect();
+                    // Finally intersect the filtered xml/method params with the filtered field params
+                    // This will find the DI params being sent into the class that is also a field in the class
+                    let filtered_di_methods = filtered_xml_and_method_params.intersect(filtered_field_params);
+                    di_params += filtered_di_methods.len() as f64;
+                    num_params += field_params.len() as f64;
+                    method_params.clear();
+                    field_params.clear();
+                    continue;
+                  }
+                  method_params.push(&method_type); 
+                }
             }
             else if metric_line.contains("metrics - ") {
                 for metric_or_name in metric_line.split_whitespace().into_iter().skip(2) {
@@ -200,6 +239,15 @@ fn main() -> std::io::Result<()> {
                                 cbo_range.max = cbo_range.max.max(metric_val);
                                 mean_cbo.acc += metric_val;
                                 mean_cbo.count += 1.0;
+                                // Dependency Injection Weighted-CBO
+                                // Set initial weight of every coupling to 2 so 2x the initial CBO
+                                // Then reduce the weight to 1 for the classes that are injected via DI
+                                let diw_cbo_val = metric_val * 2.0 - di_params;
+                                diw_cbo_values.push(diw_cbo_val);
+                                diw_cbo_range.min = diw_cbo_range.min.min(diw_cbo_val);
+                                diw_cbo_range.max = diw_cbo_range.max.max(diw_cbo_val);
+                                mean_diw_cbo.acc += diw_cbo_val;
+                                mean_diw_cbo.count += 1.0;
                             }
                             LCOM => {
                                 lcom_values.push(metric_val);
@@ -214,7 +262,7 @@ fn main() -> std::io::Result<()> {
                         current_metric_idx += 1;
                     }
                     // Non-float will be class name
-                    else { class_names.push(metric_or_name); }
+                    // else { class_names.push(metric_or_name); }
                 }
             }
         }
@@ -232,32 +280,20 @@ fn main() -> std::io::Result<()> {
         let lcom_limits = vec![lcom_range.min + lcom_limit, lcom_range.max - lcom_limit];
         let noc_limits = vec![noc_range.min + noc_limit, noc_range.max - noc_limit];
         let wmc_nom_limits = vec![wmc_nom_range.min + wmc_nom_limit, wmc_nom_range.max - wmc_nom_limit];
-
-        // Total number of classes that involve DI
-        let mut di_classes = 0;
-
-        // Iterate through all classes and perform DI analysis
-        for i in 0..(class_names.len()) {
-            if i == field_method_int.len() { break; }
-            // Generate complete set of DI classes
-            let union_di_classes = xml_di_classes.union(field_method_int[i].clone());
-            // If class implements constructor-based or setter-based dependency injection, include it as a DI class
-            if union_di_classes.intersect(class_names.clone()).len() > 0 { di_classes += 1; }
-        }
         
-        let maintainability_metric = maintainability::compute_maintainability_metric(&cbo_values, cbo_limits, dit_values, dit_limits, lcom_values, lcom_limits, 
-            noc_values, noc_limits, wmc_nom_values, wmc_nom_limits);
+        let maintainability_metric = maintainability::compute_maintainability_metric(&cbo_values, &cbo_limits, &dit_values, &dit_limits, 
+          &lcom_values, &lcom_limits, &noc_values, &noc_limits, &wmc_nom_values, &wmc_nom_limits);
 
         let mut metric_analysis = String::from(format!("{:?}{}", project_name, ","));
-        metric_analysis.push_str(&vec![(di_classes as f64 / class_names.len() as f64).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(di_params / num_params).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(1.0 - (maintainability_metric / (MAINTAINABILITY_TOTAL * class_names.len() as f64))).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![total_loc.to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_cbo.acc / mean_cbo.count).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(mean_diw_cbo.acc / mean_diw_cbo.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_dit.acc / mean_dit.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_lcom.acc / mean_lcom.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_noc.acc / mean_noc.count).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_wmc_nom.acc / mean_wmc_nom.count).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![((mean_cbo.acc / mean_cbo.count) + (class_names.len() as f64 - di_classes as f64)).to_string(), ','.to_string()].join(""));
 
         if let Err(e) = writeln!(metrics_output_file, "{}", metric_analysis) {
             eprintln!("Could not add metrics to metrics_output.csv, {}", e);
