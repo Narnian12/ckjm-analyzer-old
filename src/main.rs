@@ -86,11 +86,17 @@ fn main() -> std::io::Result<()> {
             // Find all class files within the project
             if class_file.path().extension().is_some() && class_file.path().extension().unwrap() == "xml" {
                 let xml = std::fs::read_to_string(class_file.path())?;
-                let xml_root: Element = xml.parse().unwrap();
-                for child in xml_root.children() {
-                    if child.is("bean", xml_root.ns().as_str()) {
-                        xml_di_string.push_str(&vec![",".to_string(), child.attr("class").unwrap().to_string()].join(""));
+                let xml_root: Element;
+                match xml.parse() {
+                    Ok(v) => {
+                        xml_root = v;
+                        for child in xml_root.children() {
+                          if child.is("bean", xml_root.ns().as_str()) {
+                              xml_di_string.push_str(&vec![",".to_string(), child.attr("class").unwrap().to_string()].join(""));
+                          }
+                        }
                     }
+                    Err(e) => eprintln!("{}", e),
                 }
             }
         }
@@ -126,7 +132,9 @@ fn main() -> std::io::Result<()> {
         let ckjm_output = String::from_utf8_lossy(&application.stdout);
         let metric_lines: Vec<&str> = ckjm_output.split("\n").collect();
         let mut total_loc = 0.0;
+        let mut total_di_params = 0.0;
         let mut di_params = 0.0;
+        let mut total_num_params = 0.0;
         let mut num_params = 0.0;
 
         // Variables for DI analysis
@@ -168,45 +176,39 @@ fn main() -> std::io::Result<()> {
         for metric_line in metric_lines {
             let mut current_metric_idx = 0; // Iterate through every metric
             if metric_line.contains("~") { continue; }
-            else if metric_line.contains("fieldTypes - ,") {
+            else if metric_line.contains("field_params - ,") {
                 let types: Vec<&str> = metric_line.split(',').collect();
                 for field_type in types.iter().skip(1) { field_params.push(&field_type); }
             }
-            else if metric_line.contains("methods - ") {
+            else if metric_line.contains("method_params - ,") {
                 let types: Vec<&str> = metric_line.split(",").collect();
-                for method_type in types.iter().skip(1) {
-                  if method_type.contains("methods - ") { continue; }
-                  else if method_type.contains("methodTypes") {
-                    // If methods vector is empty, there are no parameters 
-                    if method_params.len() == 0 { continue; }
-                    // ELSE
-                    // First find the union of the method params with XML DI params
-                    // This will be a vector of all params potentially being sent into the class
-                    let xml_and_method_params = method_params.union(xml_di_classes.clone());
-                    // Next find the intersection of the previous union with all class names
-                    // This will filter out primitive types from being considered DI
-                    let mut filtered_xml_and_method_params = xml_and_method_params.intersect(class_names.clone());
-                    // Filter out duplicate params because we will consider two classes to be coupled to each other if they
-                    // depend on each other at least once
-                    filtered_xml_and_method_params = filtered_xml_and_method_params.into_iter().unique().collect();
-                    // Next find the intersection of the field params with all class names
-                    // This will also filter out primitive types within field params
-                    let mut filtered_field_params = field_params.intersect(class_names.clone());
-                    // Again filter out duplicate params
-                    filtered_field_params = filtered_field_params.into_iter().unique().collect();
-                    // Finally intersect the filtered xml/method params with the filtered field params
-                    // This will find the DI params being sent into the class that is also a field in the class
-                    let filtered_di_methods = filtered_xml_and_method_params.intersect(filtered_field_params);
-                    di_params += filtered_di_methods.len() as f64;
-                    num_params += field_params.len() as f64;
-                    method_params.clear();
-                    field_params.clear();
-                    continue;
-                  }
-                  method_params.push(&method_type); 
-                }
+                for method_type in types.iter().skip(1) { method_params.push(&method_type); }
             }
             else if metric_line.contains("metrics - ") {
+                // DI Analysis
+                // First find the union of the method params with XML DI params
+                // This will be a vector of all params potentially being sent into the class
+                let xml_and_method_params = method_params.union(xml_di_classes.clone());
+                // Next find the intersection of the previous union with all class names
+                // This will filter out primitive types from being considered DI
+                let mut filtered_xml_and_method_params = xml_and_method_params.intersect(class_names.clone());
+                // Filter out duplicate params because we will consider two classes to be coupled to each other if they
+                // depend on each other at least once
+                filtered_xml_and_method_params = filtered_xml_and_method_params.into_iter().unique().collect();
+                // Next find the intersection of the field params with all class names
+                // This will also filter out primitive types within field params
+                let mut filtered_field_params = field_params.intersect(class_names.clone());
+                // Again filter out duplicate params
+                filtered_field_params = filtered_field_params.into_iter().unique().collect();
+                // Finally intersect the filtered xml/method params with the filtered field params
+                // This will find the DI params being sent into the class that is also a field in the class
+                let filtered_di_methods = filtered_xml_and_method_params.intersect(filtered_field_params.clone());
+                di_params += filtered_di_methods.len() as f64;
+                num_params += filtered_field_params.len() as f64;
+                total_di_params += di_params;
+                total_num_params += num_params;
+
+                // Metric Analysis
                 for metric_or_name in metric_line.split_whitespace().into_iter().skip(2) {
                     let float_parse = metric_or_name.parse::<f64>();
                     if float_parse.is_ok() {
@@ -240,9 +242,8 @@ fn main() -> std::io::Result<()> {
                                 mean_cbo.acc += metric_val;
                                 mean_cbo.count += 1.0;
                                 // Dependency Injection Weighted-CBO
-                                // Set initial weight of every coupling to 2 so 2x the initial CBO
-                                // Then reduce the weight to 1 for the classes that are injected via DI
-                                let diw_cbo_val = metric_val * 2.0 - di_params;
+                                // Decrease coupling by 0.5 for every DI class-param within class
+                                let diw_cbo_val = metric_val - (0.5 * di_params);
                                 diw_cbo_values.push(diw_cbo_val);
                                 diw_cbo_range.min = diw_cbo_range.min.min(diw_cbo_val);
                                 diw_cbo_range.max = diw_cbo_range.max.max(diw_cbo_val);
@@ -261,9 +262,12 @@ fn main() -> std::io::Result<()> {
                         }
                         current_metric_idx += 1;
                     }
-                    // Non-float will be class name
-                    // else { class_names.push(metric_or_name); }
                 }
+                // Clear vectors and values for DI analysis for the next class
+                field_params.clear();
+                method_params.clear();
+                di_params = 0.0;
+                num_params = 0.0;
             }
         }
         // Finish iterating through CKJM-Extended output
@@ -285,7 +289,7 @@ fn main() -> std::io::Result<()> {
           &lcom_values, &lcom_limits, &noc_values, &noc_limits, &wmc_nom_values, &wmc_nom_limits);
 
         let mut metric_analysis = String::from(format!("{:?}{}", project_name, ","));
-        metric_analysis.push_str(&vec![(di_params / num_params).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(total_di_params / total_num_params).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(1.0 - (maintainability_metric / (MAINTAINABILITY_TOTAL * class_names.len() as f64))).to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![total_loc.to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![(mean_cbo.acc / mean_cbo.count).to_string(), ','.to_string()].join(""));
