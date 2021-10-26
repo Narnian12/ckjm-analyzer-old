@@ -80,9 +80,9 @@ fn main() -> std::io::Result<()> {
         let project_path = project_dir.path().clone();
 
         // Find classes injected via XML-injection as well as all class files
-        let mut xml_di_string: String = String::new();
-        let mut class_files_string: String = String::new();
-        let mut class_names: Vec<&str> = Vec::new();
+        let mut xml_di_string = String::new();
+        let mut class_files_string = String::new();
+        let mut class_names_string = String::new();
         for entry in WalkDir::new(project_path.clone()) {
             let file = entry.unwrap();
             // Find all xml files within the project
@@ -104,6 +104,8 @@ fn main() -> std::io::Result<()> {
             else if file.path().extension().is_some() && file.path().extension().unwrap() == "class" {
                 // These strings contain the absolute path of the class file
                 class_files_string.push_str(&vec![file.path().to_str().unwrap(), ","].join(""));
+                let file_name = file.file_name().to_str().unwrap();
+                class_names_string.push_str(&vec![&file_name[0..file_name.len() - 6], ","].join(""));
             }
         }
 
@@ -118,13 +120,9 @@ fn main() -> std::io::Result<()> {
         let mut class_files: Vec<&str> = class_files_string.split(',').collect();
         // Last element is empty because of comma-delimiter
         class_files.pop();
-        for class_file in class_files.clone() {
-            // Parse name based on '/' delimiter
-            let class_name_vec: Vec<&str> = class_file.split('/').collect();
-            // Finally parse the '.' delimiter because of the .class extension
-            let class_name_split: Vec<&str> = class_name_vec[class_name_vec.len() - 1].split('.').collect();
-            class_names.push(class_name_split[0]);
-        }
+
+        let mut class_names: Vec<&str> = class_names_string.split(',').collect();
+        class_names.pop();
 
         let project_name = project_dir.file_name();
 
@@ -155,7 +153,6 @@ fn main() -> std::io::Result<()> {
         let mut mean_wmc_nom = MetricMean { acc: 0.0, count: 0.0 };
 
         // Iteratively execute CKJM analysis on all class files within specific Java project
-        println!("total classes {}", class_files.len());
         for class_file in class_files {
             let mut method_params: Vec<&str> = Vec::new();
             let mut unix_arg = "java -jar ".to_owned();
@@ -163,8 +160,8 @@ fn main() -> std::io::Result<()> {
 
             let application = if cfg!(target_os = "windows") {
                 std::process::Command::new("cmd")
-                                    .args(&["java", "-jar", jar_path, class_file, "2>", "nul"])
-                                    .current_dir(&project_dir.path())
+                                    .args(&["/C", "java", "-jar", jar_path, class_file, "2>", "nul"])
+                                    .current_dir(&ckjm_root_dir)
                                     .output()
                                     .expect("Failed to execute application")
             } else {
