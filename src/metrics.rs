@@ -105,7 +105,11 @@ impl ClassData {
     pub fn compute_class_di_metrics(&mut self, class_names: &Vec<String>, xml_di_classes: &Vec<String>) {
         // First find the union of the method params with XML DI params
         // This will be a vector of all params potentially being sent into the class
-        let xml_and_method_params = self.method_params.union(xml_di_classes.clone());
+        let xml_and_method_params = if xml_di_classes.len() > 0 { 
+            self.method_params.union(xml_di_classes.clone()) 
+        } else {
+            self.method_params.to_vec()
+        };
         // Next find the intersection of the previous union with all class names
         // This will filter out primitive types from being considered DI
         let mut filtered_xml_and_method_params = xml_and_method_params.intersect(class_names.to_vec());

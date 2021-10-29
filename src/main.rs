@@ -154,7 +154,8 @@ fn main() -> std::io::Result<()> {
                     class_and_metrics_struct.total_couplings += 1.0;
                     // First string is class name
                     if name == "" { 
-                        name = name_or_type;
+                        let split_name: Vec<&str> = name_or_type.split('.').collect();
+                        name = split_name[split_name.len() - 1];
                         class_and_metrics_struct.classes.insert(name.to_string(), ClassData::new());
                     }
                     else {
@@ -185,8 +186,9 @@ fn main() -> std::io::Result<()> {
                         }
                         current_metric_idx += 1;
                     }
-                    else { 
-                        class_name = metric_or_name;
+                    else {
+                        let split_class_name: Vec<&str> = metric_or_name.split('.').collect();
+                        class_name = split_class_name[split_class_name.len() - 1];
                     }
                 }
             }
