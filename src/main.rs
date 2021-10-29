@@ -6,20 +6,10 @@ use minidom::Element;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
 use clap::{Arg, App};
-use array_tool::vec::{Intersect, Union};
 use walkdir::WalkDir;
-use itertools::Itertools;
+use crate::metrics::{ClassAndMetricStruct, ClassData};
+mod metrics;
 mod maintainability;
-
-struct MetricRange {
-    min: f64,
-    max: f64
-}
-
-struct MetricMean {
-    acc: f64,
-    count: f64
-}
 
 // Indices for metrics
 // WMC is the same as NOM
@@ -30,7 +20,6 @@ const CBO: i32 = 3;
 const LCOM: i32 = 5;
 const LOC: i32 = 10;
 
-const OUTLIER: f64 = 0.15;
 const MAINTAINABILITY_TOTAL: f64 = 35.0;
 
 fn main() -> std::io::Result<()> {
@@ -111,10 +100,10 @@ fn main() -> std::io::Result<()> {
 
         let unprocessed_xml_di_classes: Vec<&str> = xml_di_string.split(',').collect();
         // Contains final processed class names injected via XML
-        let mut xml_di_classes: Vec<&str> = Vec::new();
+        let mut xml_di_classes: Vec<String> = Vec::new();
         for unprocessed_class in unprocessed_xml_di_classes {
             let split_xml_di_classes: Vec<&str> = unprocessed_class.split('.').collect();
-            xml_di_classes.push(split_xml_di_classes[split_xml_di_classes.len() - 1]);
+            xml_di_classes.push(split_xml_di_classes[split_xml_di_classes.len() - 1].to_string());
         }
 
         let mut class_files: Vec<&str> = class_files_string.split(',').collect();
@@ -123,162 +112,113 @@ fn main() -> std::io::Result<()> {
 
         let mut class_names: Vec<&str> = class_names_string.split(',').collect();
         class_names.pop();
-
-        let project_name = project_dir.file_name();
-
-        let mut total_loc = 0.0;
-        let mut di_couplings = 0.0;
-        let mut di_params = 0.0;
-        let mut total_couplings = 0.0;
-
-        // Variables for maintainability analysis
-        let mut cbo_values: Vec<f64> = Vec::new();
-        let mut cbo_range = MetricRange { min: f64::MAX, max: f64::MIN };
-        let mut diw_cbo_values: Vec<f64> = Vec::new();
-        let mut dit_values: Vec<f64> = Vec::new();
-        let mut dit_range = MetricRange { min: f64::MAX, max: f64::MIN };
-        let mut lcom_values: Vec<f64> = Vec::new();
-        let mut lcom_range = MetricRange { min: f64::MAX, max: f64::MIN };
-        let mut noc_values: Vec<f64> = Vec::new();
-        let mut noc_range = MetricRange { min: f64::MAX, max: f64::MIN };
-        let mut wmc_nom_values: Vec<f64> = Vec::new();
-        let mut wmc_nom_range = MetricRange { min: f64::MAX, max: f64::MIN };
-
-        // Variables for metrics mean analysis
-        let mut mean_cbo = MetricMean { acc: 0.0, count: 0.0 };
-        let mut mean_diw_cbo = MetricMean { acc: 0.0, count: 0.0 };
-        let mut mean_dit = MetricMean { acc: 0.0, count: 0.0 };
-        let mut mean_lcom = MetricMean { acc: 0.0, count: 0.0 };
-        let mut mean_noc = MetricMean { acc: 0.0, count: 0.0 };
-        let mut mean_wmc_nom = MetricMean { acc: 0.0, count: 0.0 };
-
-        // Iteratively execute CKJM analysis on all class files within specific Java project
-        for class_file in class_files {
-            let mut method_params: Vec<&str> = Vec::new();
-            let mut unix_arg = "java -jar ".to_owned();
-            unix_arg.push_str(&vec![jar_path, class_file, "2>/dev/null"].join(" ").to_string());
-
-            let application = if cfg!(target_os = "windows") {
-                std::process::Command::new("cmd")
-                                    .args(&["/C", "java", "-jar", jar_path, class_file, "2>", "nul"])
-                                    .current_dir(&ckjm_root_dir)
-                                    .output()
-                                    .expect("Failed to execute application")
-            } else {
-                std::process::Command::new("sh")
-                                    .arg("-c")
-                                    .arg(unix_arg)
-                                    .current_dir(&ckjm_root_dir)
-                                    .output()
-                                    .expect("Failed to execute application")
-            };
-            let ckjm_output = String::from_utf8_lossy(&application.stdout);
-            let metric_lines: Vec<&str> = ckjm_output.split("\n").collect();
-            // Iterate through CKJM-Extended output
-            for metric_line in metric_lines {
-                let mut current_metric_idx = 0; // Iterate through every metric
-                if metric_line.contains("~") { continue; }
-                else if metric_line.contains("method_params - ,") {
-                    let types: Vec<&str> = metric_line.split(",").collect();
-                    for method_type in types.iter().skip(1) { method_params.push(&method_type); }
-                }
-                else if metric_line.contains("metrics - ") {
-                    // DI Analysis
-                    // First find the union of the method params with XML DI params
-                    // This will be a vector of all params potentially being sent into the class
-                    let xml_and_method_params = method_params.union(xml_di_classes.clone());
-                    // Next find the intersection of the previous union with all class names
-                    // This will filter out primitive types from being considered DI
-                    let mut filtered_xml_and_method_params = xml_and_method_params.intersect(class_names.clone());
-                    // Filter out duplicate params because we will consider two classes to be coupled to each other if they
-                    // depend on each other at least once
-                    filtered_xml_and_method_params = filtered_xml_and_method_params.into_iter().unique().collect();
-                    di_params += filtered_xml_and_method_params.len() as f64;
-                    di_couplings += di_params;
-
-                    // Metric Analysis
-                    for metric_or_name in metric_line.split_whitespace().into_iter().skip(2) {
-                        let float_parse = metric_or_name.parse::<f64>();
-                        if float_parse.is_ok() {
-                            let metric_val = float_parse.unwrap();
-                            match current_metric_idx {
-                                WMC_NOM => {
-                                    wmc_nom_values.push(metric_val);
-                                    wmc_nom_range = MetricRange { min: wmc_nom_range.min.min(metric_val), max: wmc_nom_range.max.max(metric_val) };
-                                    mean_wmc_nom.acc += metric_val;
-                                    mean_wmc_nom.count += 1.0;
-                                }
-                                DIT => {
-                                    dit_values.push(metric_val);
-                                    dit_range = MetricRange { min: dit_range.min.min(metric_val), max: dit_range.max.max(metric_val) };
-                                    mean_dit.acc += metric_val;
-                                    mean_dit.count += 1.0;
-                                }
-                                NOC => {
-                                    noc_values.push(metric_val);
-                                    noc_range = MetricRange { min: noc_range.min.min(metric_val), max: noc_range.max.max(metric_val) };
-                                    mean_noc.acc += metric_val;
-                                    mean_noc.count += 1.0;
-                                }
-                                CBO => {
-                                    total_couplings += metric_val;
-                                    cbo_values.push(metric_val);
-                                    cbo_range = MetricRange { min: cbo_range.min.min(metric_val), max: cbo_range.max.max(metric_val) };
-                                    mean_cbo.acc += metric_val;
-                                    mean_cbo.count += 1.0;
-                                    // Dependency Injection Weighted-CBO
-                                    // Decrease coupling by 0.5 for every DI class-param within class
-                                    let diw_cbo_val = metric_val - (0.5 * di_params);
-                                    diw_cbo_values.push(diw_cbo_val);
-                                    mean_diw_cbo.acc += diw_cbo_val;
-                                    mean_diw_cbo.count += 1.0;
-                                }
-                                LCOM => {
-                                    lcom_values.push(metric_val);
-                                    lcom_range = MetricRange { min: lcom_range.min.min(metric_val), max: lcom_range.max.max(metric_val) };
-                                    mean_lcom.acc += metric_val;
-                                    mean_lcom.count += 1.0;
-                                }
-                                LOC => { total_loc += metric_val; }
-                                _ => {}
-                            }
-                            current_metric_idx += 1;
-                        }
-                    }
-                    // Clear vectors and values for DI analysis for the next class
-                    method_params.clear();
-                    di_params = 0.0;
-                }
-            }
-            // Finish iterating through CKJM-Extended output
+        let mut owned_class_names: Vec<String> = Vec::new();
+        for class_name in class_names {
+            owned_class_names.push(class_name.to_string());
         }
 
-        let cbo_limit = (cbo_range.max - cbo_range.min) * OUTLIER;
-        let dit_limit = (dit_range.max - dit_range.min) * OUTLIER;
-        let lcom_limit = (lcom_range.max - lcom_range.min) * OUTLIER;
-        let noc_limit = (noc_range.max - noc_range.min) * OUTLIER;
-        let wmc_nom_limit = (wmc_nom_range.max - wmc_nom_range.min) * OUTLIER;
+        let project_name = project_dir.file_name();
+        // Contains all information for DI and metrics analysis
+        let mut class_and_metrics_struct: ClassAndMetricStruct = ClassAndMetricStruct::new();
+        class_and_metrics_struct.initialize_metrics();
 
-        // Use this to determine whether the current class metric is an outlier
-        let cbo_limits = vec![cbo_range.min + cbo_limit, cbo_range.max - cbo_limit];
-        let dit_limits = vec![dit_range.min + dit_limit, dit_range.max - dit_limit];
-        let lcom_limits = vec![lcom_range.min + lcom_limit, lcom_range.max - lcom_limit];
-        let noc_limits = vec![noc_range.min + noc_limit, noc_range.max - noc_limit];
-        let wmc_nom_limits = vec![wmc_nom_range.min + wmc_nom_limit, wmc_nom_range.max - wmc_nom_limit];
+        let mut unix_arg = "find ".to_owned();
+        unix_arg.push_str(&vec![project_path.to_str().unwrap(), "-name '*.class' -print | java -jar", jar_path, "2>/dev/null"].join(" ").to_string());
+
+        // Execute cross-platform command that performs CKJM analysis, outputs the results in a text file, and ignores error messages
+        let application = if cfg!(target_os = "windows") {
+            std::process::Command::new("cmd")
+                                .args(&["/C", "dir", "/b", "/s", "*.class", "|", "findstr", "/v", ".class.", "|", "java", "-jar", jar_path, "2>", "nul"])
+                                .current_dir(&project_dir.path())
+                                .output()
+                                .expect("Failed to execute application")
+        } else {
+            std::process::Command::new("sh")
+                                .arg("-c")
+                                .arg(unix_arg)
+                                .current_dir(&ckjm_root_dir)
+                                .output()
+                                .expect("Failed to execute application")
+        };
+
+        let ckjm_output = String::from_utf8_lossy(&application.stdout);
+        let metric_lines: Vec<&str> = ckjm_output.split("\n").collect();
+
+        // Iterate through CKJM-Extended output
+        for metric_line in metric_lines {
+            let mut current_metric_idx = 0; // Iterate through every metric
+            if metric_line.contains("~") { continue; }
+            else if metric_line.contains("method_params - ") {
+                let mut name = "";
+                for name_or_type in metric_line.split_whitespace().into_iter().skip(2) {
+                    class_and_metrics_struct.total_couplings += 1.0;
+                    // First string is class name
+                    if name == "" { 
+                        name = name_or_type;
+                        class_and_metrics_struct.classes.insert(name.to_string(), ClassData::new());
+                    }
+                    else {
+                        class_and_metrics_struct.classes.get_mut(name).unwrap().add_method_param(name_or_type.to_string());
+                    }
+                }
+            }
+            else if metric_line.contains("metrics - ") {
+                // Metric Analysis
+                let mut class_name = "";
+                for metric_or_name in metric_line.split_whitespace().into_iter().skip(2) {
+                    let float_parse = metric_or_name.parse::<f64>();
+                    if float_parse.is_ok() {
+                        let metric_val = float_parse.unwrap();
+                        match current_metric_idx {
+                            WMC_NOM => { class_and_metrics_struct.metrics.get_mut("WMC_NOM").unwrap().add_metric_value(metric_val); }
+                            DIT => { class_and_metrics_struct.metrics.get_mut("DIT").unwrap().add_metric_value(metric_val); }
+                            NOC => { class_and_metrics_struct.metrics.get_mut("NOC").unwrap().add_metric_value(metric_val); }
+                            CBO => {
+                                let class_elem = class_and_metrics_struct.classes.get_mut(class_name).unwrap();
+                                class_elem.add_cbo(metric_val);
+                                class_elem.compute_class_di_metrics(&owned_class_names, &xml_di_classes);
+                                class_and_metrics_struct.metrics.get_mut("CBO").unwrap().add_metric_value(metric_val);
+                            }
+                            LCOM => { class_and_metrics_struct.metrics.get_mut("LCOM").unwrap().add_metric_value(metric_val); }
+                            LOC => { class_and_metrics_struct.total_loc += metric_val; }
+                            _ => {}
+                        }
+                        current_metric_idx += 1;
+                    }
+                    else { 
+                        class_name = metric_or_name;
+                    }
+                }
+            }
+        }
+        // Finish iterating through CKJM-Extended output
+        class_and_metrics_struct.generate_di_metrics();
+        class_and_metrics_struct.generate_limits();
+        class_and_metrics_struct.compute_means();
+
+        let maintainability_metric = maintainability::compute_maintainability_metric(
+            &class_and_metrics_struct.metrics["CBO"].values, 
+            &class_and_metrics_struct.metrics["CBO"].limits, 
+            &class_and_metrics_struct.metrics["DIT"].values, 
+            &class_and_metrics_struct.metrics["DIT"].limits, 
+            &class_and_metrics_struct.metrics["LCOM"].values,
+            &class_and_metrics_struct.metrics["LCOM"].limits,
+            &class_and_metrics_struct.metrics["NOC"].values,
+            &class_and_metrics_struct.metrics["NOC"].limits,
+            &class_and_metrics_struct.metrics["WMC_NOM"].values,
+            &class_and_metrics_struct.metrics["WMC_NOM"].limits
+        );
         
-        let maintainability_metric = maintainability::compute_maintainability_metric(&cbo_values, &cbo_limits, &dit_values, &dit_limits, 
-          &lcom_values, &lcom_limits, &noc_values, &noc_limits, &wmc_nom_values, &wmc_nom_limits);
-
         let mut metric_analysis = String::from(format!("{:?}{}", project_name, ","));
-        metric_analysis.push_str(&vec![(di_couplings / total_couplings).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(1.0 - (maintainability_metric / (MAINTAINABILITY_TOTAL * class_names.len() as f64))).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![total_loc.to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(mean_cbo.acc / mean_cbo.count).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(mean_diw_cbo.acc / mean_diw_cbo.count).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(mean_dit.acc / mean_dit.count).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(mean_lcom.acc / mean_lcom.count).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(mean_noc.acc / mean_noc.count).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(mean_wmc_nom.acc / mean_wmc_nom.count).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(class_and_metrics_struct.di_proportion).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![(1.0 - (maintainability_metric / (MAINTAINABILITY_TOTAL * owned_class_names.len() as f64))).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.total_loc.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["CBO"].mean.mean.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.diw_cbo_mean.mean.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["DIT"].mean.mean.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["LCOM"].mean.mean.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["NOC"].mean.mean.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["WMC_NOM"].mean.mean.to_string(), ','.to_string()].join(""));
 
         if let Err(e) = writeln!(metrics_output_file, "{}", metric_analysis) {
             eprintln!("Could not add metrics to metrics_output.csv, {}", e);
