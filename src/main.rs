@@ -2,6 +2,7 @@ extern crate execute;
 extern crate fs_extra;
 extern crate clap;
 extern crate minidom;
+use itertools::Itertools;
 use minidom::Element;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
@@ -150,16 +151,15 @@ fn main() -> std::io::Result<()> {
             if metric_line.contains("~") { continue; }
             else if metric_line.contains("method_params - ") {
                 let mut name = "";
-                for name_or_type in metric_line.split_whitespace().into_iter().skip(2) {
-                    class_and_metrics_struct.total_couplings += 1.0;
+                for name_or_param in metric_line.split_whitespace().into_iter().skip(2) {
                     // First string is class name
                     if name == "" { 
-                        let split_name: Vec<&str> = name_or_type.split('.').collect();
+                        let split_name: Vec<&str> = name_or_param.split('.').collect();
                         name = split_name[split_name.len() - 1];
                         class_and_metrics_struct.classes.insert(name.to_string(), ClassData::new());
                     }
                     else {
-                        class_and_metrics_struct.classes.get_mut(name).unwrap().add_method_param(name_or_type.to_string());
+                        class_and_metrics_struct.classes.get_mut(name).unwrap().add_method_param(name_or_param.to_string());
                     }
                 }
             }

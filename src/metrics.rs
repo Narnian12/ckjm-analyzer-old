@@ -158,6 +158,8 @@ impl ClassAndMetricStruct {
         for (_, class_data) in &self.classes {
             self.di_couplings += class_data.di_params;
             self.diw_cbo_mean.add_value(class_data.diw_cbo);
+            // CBO is, in essence, all classes that the current class is coupled to, and thus depends on
+            self.total_couplings += class_data.cbo;
         }
         self.di_proportion = self.di_couplings / self.total_couplings;
     }
