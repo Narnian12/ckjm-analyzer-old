@@ -2,7 +2,6 @@ extern crate execute;
 extern crate fs_extra;
 extern crate clap;
 extern crate minidom;
-use itertools::Itertools;
 use minidom::Element;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
