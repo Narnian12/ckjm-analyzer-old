@@ -122,76 +122,75 @@ fn main() -> std::io::Result<()> {
         let mut class_and_metrics_struct: ClassAndMetricStruct = ClassAndMetricStruct::new();
         class_and_metrics_struct.initialize_metrics();
 
-        let mut unix_arg = "find ".to_owned();
-        unix_arg.push_str(&vec![project_path.to_str().unwrap(), "-name '*.class' -print | java -jar", jar_path, "2>/dev/null"].join(" ").to_string());
+        for class_file in class_files {
+            let application = if cfg!(target_os = "windows") {
+                std::process::Command::new("cmd")
+                    .args(&["/C", "java", "-jar", jar_path, class_file, "2>", "nul"])
+                    .current_dir(&project_dir.path())
+                    .output()
+                    .expect("Failed to execute application")
+            } else {
+                std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(vec!["java -jar", jar_path, class_file, "2>/dev/null"].join(" ").to_string())
+                    .current_dir(&ckjm_root_dir)
+                    .output()
+                    .expect("Failed to execute application")
+            };
 
-        // Execute cross-platform command that performs CKJM analysis, outputs the results in a text file, and ignores error messages
-        let application = if cfg!(target_os = "windows") {
-            std::process::Command::new("cmd")
-                                .args(&["/C", "dir", "/b", "/s", "*.class", "|", "findstr", "/v", ".class.", "|", "java", "-jar", jar_path, "2>", "nul"])
-                                .current_dir(&project_dir.path())
-                                .output()
-                                .expect("Failed to execute application")
-        } else {
-            std::process::Command::new("sh")
-                                .arg("-c")
-                                .arg(unix_arg)
-                                .current_dir(&ckjm_root_dir)
-                                .output()
-                                .expect("Failed to execute application")
-        };
-
-        let ckjm_output = String::from_utf8_lossy(&application.stdout);
-        let metric_lines: Vec<&str> = ckjm_output.split("\n").collect();
-
-        // Iterate through CKJM-Extended output
-        for metric_line in metric_lines {
-            let mut current_metric_idx = 0; // Iterate through every metric
-            if metric_line.contains("~") { continue; }
-            else if metric_line.contains("method_params - ") {
-                let mut name = "";
-                for name_or_param in metric_line.split_whitespace().into_iter().skip(2) {
-                    // First string is class name
-                    if name == "" { 
-                        let split_name: Vec<&str> = name_or_param.split('.').collect();
-                        name = split_name[split_name.len() - 1];
-                        class_and_metrics_struct.classes.insert(name.to_string(), ClassData::new());
-                    }
-                    else {
-                        class_and_metrics_struct.classes.get_mut(name).unwrap().add_method_param(name_or_param.to_string());
+            let ckjm_output = String::from_utf8_lossy(&application.stdout);
+            let metric_lines: Vec<&str> = ckjm_output.split("\n").collect();
+    
+            // Iterate through CKJM-Extended output
+            for metric_line in metric_lines {
+                let mut current_metric_idx = 0; // Iterate through every metric
+                if metric_line.contains("~") { continue; }
+                else if metric_line.contains("method_params - ") {
+                    let mut name = "";
+                    for name_or_param in metric_line.split_whitespace().into_iter().skip(2) {
+                        // First string is class name
+                        if name == "" { 
+                            let split_name: Vec<&str> = name_or_param.split('.').collect();
+                            name = split_name[split_name.len() - 1];
+                            class_and_metrics_struct.classes.insert(name.to_string(), ClassData::new());
+                        }
+                        else {
+                            class_and_metrics_struct.classes.get_mut(name).unwrap().add_method_param(name_or_param.to_string());
+                        }
                     }
                 }
-            }
-            else if metric_line.contains("metrics - ") {
-                // Metric Analysis
-                let mut class_name = "";
-                for metric_or_name in metric_line.split_whitespace().into_iter().skip(2) {
-                    let float_parse = metric_or_name.parse::<f64>();
-                    if float_parse.is_ok() {
-                        let metric_val = float_parse.unwrap();
-                        match current_metric_idx {
-                            WMC_NOM => { class_and_metrics_struct.metrics.get_mut("WMC_NOM").unwrap().add_metric_value(metric_val); }
-                            DIT => { class_and_metrics_struct.metrics.get_mut("DIT").unwrap().add_metric_value(metric_val); }
-                            NOC => { class_and_metrics_struct.metrics.get_mut("NOC").unwrap().add_metric_value(metric_val); }
-                            CBO => {
-                                let class_elem = class_and_metrics_struct.classes.get_mut(class_name).unwrap();
-                                class_elem.add_cbo(metric_val);
-                                class_elem.compute_class_di_metrics(&owned_class_names, &xml_di_classes);
-                                class_and_metrics_struct.metrics.get_mut("CBO").unwrap().add_metric_value(metric_val);
+                else if metric_line.contains("metrics - ") {
+                    // Metric Analysis
+                    let mut class_name = "";
+                    for metric_or_name in metric_line.split_whitespace().into_iter().skip(2) {
+                        let float_parse = metric_or_name.parse::<f64>();
+                        if float_parse.is_ok() {
+                            let metric_val = float_parse.unwrap();
+                            match current_metric_idx {
+                                WMC_NOM => { class_and_metrics_struct.metrics.get_mut("WMC_NOM").unwrap().add_metric_value(metric_val); }
+                                DIT => { class_and_metrics_struct.metrics.get_mut("DIT").unwrap().add_metric_value(metric_val); }
+                                NOC => { class_and_metrics_struct.metrics.get_mut("NOC").unwrap().add_metric_value(metric_val); }
+                                CBO => {
+                                    let class_elem = class_and_metrics_struct.classes.get_mut(class_name).unwrap();
+                                    class_elem.add_cbo(metric_val);
+                                    class_elem.compute_class_di_metrics(&owned_class_names, &xml_di_classes);
+                                    class_and_metrics_struct.metrics.get_mut("CBO").unwrap().add_metric_value(metric_val);
+                                }
+                                LCOM => { class_and_metrics_struct.metrics.get_mut("LCOM").unwrap().add_metric_value(metric_val); }
+                                LOC => { class_and_metrics_struct.total_loc += metric_val; }
+                                _ => {}
                             }
-                            LCOM => { class_and_metrics_struct.metrics.get_mut("LCOM").unwrap().add_metric_value(metric_val); }
-                            LOC => { class_and_metrics_struct.total_loc += metric_val; }
-                            _ => {}
+                            current_metric_idx += 1;
                         }
-                        current_metric_idx += 1;
-                    }
-                    else {
-                        let split_class_name: Vec<&str> = metric_or_name.split('.').collect();
-                        class_name = split_class_name[split_class_name.len() - 1];
+                        else {
+                            let split_class_name: Vec<&str> = metric_or_name.split('.').collect();
+                            class_name = split_class_name[split_class_name.len() - 1];
+                        }
                     }
                 }
             }
         }
+
         // Finish iterating through CKJM-Extended output
         class_and_metrics_struct.generate_di_metrics();
         class_and_metrics_struct.generate_limits();
@@ -228,3 +227,23 @@ fn main() -> std::io::Result<()> {
 
     Ok(())
 }
+
+// TODO : Use this once CKJM-DI is fixed to allow for parallel execution
+// let mut unix_arg = "find ".to_owned();
+// unix_arg.push_str(&vec![project_path.to_str().unwrap(), "-name '*.class' -print | java -jar", jar_path, "2>/dev/null"].join(" ").to_string());
+
+// // Execute cross-platform command that performs CKJM analysis, outputs the results in a text file, and ignores error messages
+// let application = if cfg!(target_os = "windows") {
+//     std::process::Command::new("cmd")
+//                         .args(&["/C", "dir", "/b", "/s", "*.class", "|", "findstr", "/v", ".class.", "|", "java", "-jar", jar_path, "2>", "nul"])
+//                         .current_dir(&project_dir.path())
+//                         .output()
+//                         .expect("Failed to execute application")
+// } else {
+//     std::process::Command::new("sh")
+//                         .arg("-c")
+//                         .arg(unix_arg)
+//                         .current_dir(&ckjm_root_dir)
+//                         .output()
+//                         .expect("Failed to execute application")
+// };
