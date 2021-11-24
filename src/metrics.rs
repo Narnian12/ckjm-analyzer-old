@@ -66,11 +66,6 @@ impl MetricsData {
         self.mean.add_value(value);
     }
 
-    pub fn generate_limits(&mut self) {
-        let limit = (self.range.max - self.range.min) * OUTLIER;
-        self.limits = vec![self.range.min + limit, self.range.max - limit];
-    }
-
     pub fn compute_mean(&mut self) {
         self.mean.compute_mean();
     }
@@ -148,7 +143,7 @@ impl ClassAndMetricStruct {
     }
 
     pub fn initialize_metrics(&mut self) {
-        let metric_names = ["WMC_NOM", "DIT", "NOC", "CBO", "LCOM"];
+        let metric_names = ["CBO", "DAM", "MOA", "DIT", "MFA"];
         for metric in metric_names {
             self.metrics.insert(metric.to_string(), MetricsData::new());
         }
@@ -164,16 +159,8 @@ impl ClassAndMetricStruct {
         self.di_proportion = self.di_couplings / self.total_couplings;
     }
 
-    pub fn generate_limits(&mut self) {
-        let metric_names = ["WMC_NOM", "DIT", "NOC", "CBO", "LCOM"];
-        for metric_name in metric_names {
-            let metric_data = self.metrics.get_mut(&metric_name.to_string()).unwrap();
-            metric_data.generate_limits();
-        }
-    }
-
     pub fn compute_means(&mut self) {
-        let metric_names = ["WMC_NOM", "DIT", "NOC", "CBO", "LCOM"];
+        let metric_names = ["CBO", "DAM", "MOA", "DIT", "MFA"];
         for metric_name in metric_names {
             let metric_data = self.metrics.get_mut(&metric_name.to_string()).unwrap();
             metric_data.compute_mean();

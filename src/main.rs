@@ -17,10 +17,21 @@ const WMC_NOM: i32 = 0;
 const DIT: i32 = 1;
 const NOC: i32 = 2;
 const CBO: i32 = 3;
+const RFC: i32 = 4;
 const LCOM: i32 = 5;
+const CA: i32 = 6;
+const CE: i32 = 7;
+const NPM: i32 = 8;
+const LCOM3: i32 = 9;
 const LOC: i32 = 10;
-
-const MAINTAINABILITY_TOTAL: f64 = 35.0;
+const DAM: i32 = 11;
+const MOA: i32 = 12;
+const MFA: i32 = 13;
+const CAM: i32 = 14;
+const IC: i32 = 15;
+const CBM: i32 = 16;
+const AMC: i32 = 17;
+const CC: i32 = 18;
 
 fn main() -> std::io::Result<()> {
     // Parse command line arguments
@@ -57,7 +68,7 @@ fn main() -> std::io::Result<()> {
                                     .open(metrics_output_path.clone())
                                     .unwrap();
 
-    let metrics_headers = "Project,DI,MAI,LOC,CBO,DIW-CBO,DIT,LCOM,NOC,WMC-NOM";
+    let metrics_headers = "Project,DI,MAI,DIW-MAI,LOC,CBO,DIW-CBO,DAM,MOA,DIT,MFA";
     if let Err(e) = writeln!(metrics_output_file, "{}", metrics_headers) {
         eprintln!("Could not add headers to metrics_output.csv, {}", e);
     }
@@ -167,16 +178,16 @@ fn main() -> std::io::Result<()> {
                         if float_parse.is_ok() {
                             let metric_val = float_parse.unwrap();
                             match current_metric_idx {
-                                WMC_NOM => { class_and_metrics_struct.metrics.get_mut("WMC_NOM").unwrap().add_metric_value(metric_val); }
-                                DIT => { class_and_metrics_struct.metrics.get_mut("DIT").unwrap().add_metric_value(metric_val); }
-                                NOC => { class_and_metrics_struct.metrics.get_mut("NOC").unwrap().add_metric_value(metric_val); }
                                 CBO => {
                                     let class_elem = class_and_metrics_struct.classes.get_mut(class_name).unwrap();
                                     class_elem.add_cbo(metric_val);
                                     class_elem.compute_class_di_metrics(&owned_class_names, &xml_di_classes);
                                     class_and_metrics_struct.metrics.get_mut("CBO").unwrap().add_metric_value(metric_val);
                                 }
-                                LCOM => { class_and_metrics_struct.metrics.get_mut("LCOM").unwrap().add_metric_value(metric_val); }
+                                DAM => { class_and_metrics_struct.metrics.get_mut("DAM").unwrap().add_metric_value(metric_val); }
+                                MOA => { class_and_metrics_struct.metrics.get_mut("MOA").unwrap().add_metric_value(metric_val); }
+                                DIT => { class_and_metrics_struct.metrics.get_mut("DIT").unwrap().add_metric_value(metric_val); }
+                                MFA => { class_and_metrics_struct.metrics.get_mut("MFA").unwrap().add_metric_value(metric_val); }
                                 LOC => { class_and_metrics_struct.total_loc += metric_val; }
                                 _ => {}
                             }
@@ -193,32 +204,35 @@ fn main() -> std::io::Result<()> {
 
         // Finish iterating through CKJM-Extended output
         class_and_metrics_struct.generate_di_metrics();
-        class_and_metrics_struct.generate_limits();
         class_and_metrics_struct.compute_means();
 
         let maintainability_metric = maintainability::compute_maintainability_metric(
-            &class_and_metrics_struct.metrics["CBO"].values, 
-            &class_and_metrics_struct.metrics["CBO"].limits, 
-            &class_and_metrics_struct.metrics["DIT"].values, 
-            &class_and_metrics_struct.metrics["DIT"].limits, 
-            &class_and_metrics_struct.metrics["LCOM"].values,
-            &class_and_metrics_struct.metrics["LCOM"].limits,
-            &class_and_metrics_struct.metrics["NOC"].values,
-            &class_and_metrics_struct.metrics["NOC"].limits,
-            &class_and_metrics_struct.metrics["WMC_NOM"].values,
-            &class_and_metrics_struct.metrics["WMC_NOM"].limits
+            class_and_metrics_struct.metrics["CBO"].mean.mean,
+            class_and_metrics_struct.metrics["DAM"].mean.mean,
+            class_and_metrics_struct.metrics["MOA"].mean.mean,
+            class_and_metrics_struct.metrics["DIT"].mean.mean,
+            class_and_metrics_struct.metrics["MFA"].mean.mean
+        );
+
+        let diw_cbo_maintainability_metric = maintainability::compute_maintainability_metric(
+            class_and_metrics_struct.diw_cbo_mean.mean,
+            class_and_metrics_struct.metrics["DAM"].mean.mean,
+            class_and_metrics_struct.metrics["MOA"].mean.mean,
+            class_and_metrics_struct.metrics["DIT"].mean.mean,
+            class_and_metrics_struct.metrics["MFA"].mean.mean
         );
         
         let mut metric_analysis = String::from(format!("{:?}{}", project_name, ","));
         metric_analysis.push_str(&vec![(class_and_metrics_struct.di_proportion).to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![(1.0 - (maintainability_metric / (MAINTAINABILITY_TOTAL * owned_class_names.len() as f64))).to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![maintainability_metric.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![diw_cbo_maintainability_metric.to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![class_and_metrics_struct.total_loc.to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["CBO"].mean.mean.to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![class_and_metrics_struct.diw_cbo_mean.mean.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["DAM"].mean.mean.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["MOA"].mean.mean.to_string(), ','.to_string()].join(""));
         metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["DIT"].mean.mean.to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["LCOM"].mean.mean.to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["NOC"].mean.mean.to_string(), ','.to_string()].join(""));
-        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["WMC_NOM"].mean.mean.to_string(), ','.to_string()].join(""));
+        metric_analysis.push_str(&vec![class_and_metrics_struct.metrics["MFA"].mean.mean.to_string(), ','.to_string()].join(""));
 
         if let Err(e) = writeln!(metrics_output_file, "{}", metric_analysis) {
             eprintln!("Could not add metrics to metrics_output.csv, {}", e);
