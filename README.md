@@ -1,4 +1,4 @@
-# ckjm_analyzer
+# ckjm-analyzer
 
 Cross-platform command-line application used to analyze specific metrics from the CKJM Extended Tool. 
 
